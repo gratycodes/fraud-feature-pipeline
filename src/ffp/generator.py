@@ -78,17 +78,17 @@ class GeneratorConfig:
     seed: int = 7
     n_cards: int = 3_000
     n_merchants: int = 500
-    days: int = 120
+    days: int = 150
     mean_txn_per_card_day: float = 1.3
-    card_testing_episodes: int = 130
-    ato_episodes: int = 160
-    ring_merchants: int = 3
+    card_testing_episodes: int = 165
+    ato_episodes: int = 200
+    ring_merchants: int = 4
     ring_txns_per_merchant: int = 130
     label_delay_median_days: float = 12.0
     unreported_rate: float = 0.08
     # "Holiday season" from this day on: legit spend goes up and moves online.
     # Gives the drift report something real to detect. ``None`` disables it.
-    drift_start_day: int | None = 108
+    drift_start_day: int | None = 138
     drift_amount_mult: float = 1.35
 
 
@@ -365,8 +365,14 @@ def _fraud(
 
     lo = min(10, cfg.days // 4)
     hi = max(lo + 1, cfg.days - 15)
-    for mi in np.flatnonzero(merchants["ring_target"].to_numpy()):
-        start = EPOCH_START_MS + int(rng.integers(lo, hi)) * DAY
+    ring_ids = np.flatnonzero(merchants["ring_target"].to_numpy())
+    for k, mi in enumerate(ring_ids):
+        # The last ring starts 15 days before the end, so the most recent period
+        # always contains a merchant compromise that no label has reported yet.
+        day0 = (
+            cfg.days - 15 if k == len(ring_ids) - 1 and cfg.days > 20 else int(rng.integers(lo, hi))
+        )
+        start = EPOCH_START_MS + day0 * DAY
         length = int(rng.integers(6, 13)) * DAY
         for _k in range(cfg.ring_txns_per_merchant):
             out.append(

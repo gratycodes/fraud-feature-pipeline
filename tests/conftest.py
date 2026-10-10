@@ -75,6 +75,7 @@ def store(redis_client: redis.Redis) -> Iterator[OnlineStore]:
 
 
 SMALL_TRAIN = dict(
+    train_start_day=3,
     train_end_day=10,
     early_stop_end_day=13,
     calib_end_day=16,

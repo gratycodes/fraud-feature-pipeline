@@ -2,12 +2,12 @@
 
 Timeline (days since the start of the synthetic data, defaults):
 
-    [0 ........ 70)[70 .. 78)[78 .. 85)[85 ..... 100)[100 ....... 120)
-        train        early     calib.    label         held-out test
-                     stopping            maturity gap  (deployment period)
+    [0 .. 30)[30 ..... 100)[100 . 108)[108 . 115)[115 .... 130)[130 ....... 150)
+    feature    train        early     calib.    label         held-out test
+    warm-up                 stopping            maturity gap  (deployment period)
 
-The model is "trained on day 100" with the labels known on day 100. Events after
-day 85 are excluded from training because their chargebacks may not have arrived
+The model is "trained on day 130" with the labels known on day 130. Events after
+day 115 are excluded from training because their chargebacks may not have arrived
 yet. The test period is scored with point-in-time features and evaluated against
 the labels as eventually reported.
 
@@ -120,11 +120,14 @@ def choose_calibrator(
 @dataclass(frozen=True)
 class TrainConfig:
     start_ts: int
-    train_end_day: int = 70
-    early_stop_end_day: int = 78
-    calib_end_day: int = 85
-    as_of_day: int = 100
-    test_end_day: int = 120
+    # The merchant rate needs 30 days of history; before that its values are
+    # cold-start artefacts that never occur online, so they are not trained on.
+    train_start_day: int = 30
+    train_end_day: int = 100
+    early_stop_end_day: int = 108
+    calib_end_day: int = 115
+    as_of_day: int = 130
+    test_end_day: int = 150
     maturity_days: int = 15
     seed: int = 7
     cost: CostModel = field(default_factory=CostModel)
@@ -134,16 +137,17 @@ class TrainConfig:
 
     @classmethod
     def for_days(cls, start_ts: int, days: int) -> TrainConfig:
-        """The default 120-day timeline, scaled to a dataset of ``days`` days."""
-        if days == 120:
+        """The default 150-day timeline, scaled to a dataset of ``days`` days."""
+        if days == 150:
             return cls(start_ts=start_ts)
-        f = days / 120
+        f = days / 150
         return cls(
             start_ts=start_ts,
-            train_end_day=round(70 * f),
-            early_stop_end_day=round(78 * f),
-            calib_end_day=round(85 * f),
-            as_of_day=round(100 * f),
+            train_start_day=round(30 * f),
+            train_end_day=round(100 * f),
+            early_stop_end_day=round(108 * f),
+            calib_end_day=round(115 * f),
+            as_of_day=round(130 * f),
             test_end_day=days,
             maturity_days=max(1, round(15 * f)),
         )
@@ -190,7 +194,7 @@ def make_splits(
         return df[(df["ts"] >= cfg.ts(a)) & (df["ts"] < cfg.ts(b))].reset_index(drop=True)
 
     return Splits(
-        train=between(known, 0, cfg.train_end_day),
+        train=between(known, cfg.train_start_day, cfg.train_end_day),
         early_stop=between(known, cfg.train_end_day, cfg.early_stop_end_day),
         calib=between(known, cfg.early_stop_end_day, cfg.calib_end_day),
         test=test.reset_index(drop=True),

@@ -23,7 +23,7 @@ def _add_gen_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--cards", type=int, default=3000)
     p.add_argument("--merchants", type=int, default=500)
-    p.add_argument("--days", type=int, default=120)
+    p.add_argument("--days", type=int, default=150)
 
 
 def cmd_generate(a: argparse.Namespace) -> None:
@@ -94,9 +94,9 @@ def cmd_demo(a: argparse.Namespace) -> None:
         }
         skew_md += [f"## {title}", "", skew.to_markdown(), ""]
         if key == "in_sync":
-            test_from = start_ts + int(res.bundle.metadata["train_config"]["as_of_day"]) * DAY
+            last_week = start_ts + (a.days - 7) * DAY
             _, drift_md = monitoring_reports(
-                res.bundle, res.features, rep.served, current_start_ts=test_from
+                res.bundle, res.features, rep.served, current_start_ts=last_week
             )
             replay_json = {
                 "start_day": a.replay_day,
@@ -337,7 +337,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--reports", default="reports")
     p.add_argument("--redis-url", default=None)
     p.add_argument("--prefix", default="ffp-demo")
-    p.add_argument("--replay-day", type=int, default=110)
+    p.add_argument("--replay-day", type=int, default=140)
     p.add_argument("--replay-hours", type=float, default=24)
     p.add_argument("--lag-events", type=int, default=50)
     p.add_argument(
@@ -362,7 +362,7 @@ def main(argv: list[str] | None = None) -> None:
         p.add_argument("--prefix", default="ffp")
         p.add_argument("--sample", type=int, default=5000)
         p.add_argument("--fail-on-skew", action="store_true")
-        p.add_argument("--as-of-day", type=float, default=110)
+        p.add_argument("--as-of-day", type=float, default=140)
         p.set_defaults(fn=fn)
 
     p = sub.add_parser("produce", help="publish transactions to Kafka")
@@ -389,8 +389,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--api", default="http://localhost:8000")
     p.add_argument("--bootstrap", default="localhost:9092")
     p.add_argument("--topic", default="transactions")
-    p.add_argument("--from-day", type=float, default=110)
-    p.add_argument("--to-day", type=float, default=110.25)
+    p.add_argument("--from-day", type=float, default=140)
+    p.add_argument("--to-day", type=float, default=140.25)
     p.add_argument(
         "--pace-ms",
         type=float,

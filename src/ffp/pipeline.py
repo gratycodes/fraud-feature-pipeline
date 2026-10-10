@@ -170,10 +170,12 @@ def monitoring_reports(
     md = "\n\n".join(
         [
             drift_markdown(
-                rows_period, "Training reference vs. held-out period (offline features)"
+                rows_period,
+                "Training reference vs. the last 7 days (offline features)",
             ),
             drift_markdown(
-                rows_served, "Training reference vs. replayed online traffic (served features)"
+                rows_served,
+                "Training reference vs. one replayed day of online traffic (served features)",
             ),
         ]
     )

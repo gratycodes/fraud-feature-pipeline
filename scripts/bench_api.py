@@ -46,7 +46,7 @@ def main() -> None:
     ap.add_argument("--redis-url", required=True)
     ap.add_argument("--workdir", default="data")
     ap.add_argument("--n", type=int, default=5000)
-    ap.add_argument("--day", type=int, default=110)
+    ap.add_argument("--day", type=int, default=140)
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--out", default="reports/latency.json")

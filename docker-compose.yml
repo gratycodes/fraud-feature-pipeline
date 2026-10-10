@@ -1,8 +1,8 @@
 # Full stack: Redpanda (Kafka API) -> stream processor -> Redis <- FastAPI scorer.
 #
 #   docker compose up -d --build api processor   # build data + model, start the stack
-#   docker compose run --rm replay               # score 6h of traffic via the API, publish to Kafka
-#   docker compose run --rm monitor              # skew (feature log vs offline) + drift
+#   docker compose run --rm --no-deps replay     # score 6h of traffic via the API, publish to Kafka
+#   docker compose run --rm --no-deps monitor    # skew (feature log vs offline) + drift
 #   curl -s localhost:8000/model
 #   docker compose down -v
 
@@ -47,7 +47,7 @@ services:
     command:
       - >-
         ffp build --workdir /data &&
-        ffp load-online --raw /data/raw --offline /data/offline --as-of-day 110
+        ffp load-online --raw /data/raw --offline /data/offline --as-of-day 140
         --redis-url redis://redis:6379/0
     depends_on:
       redis:
@@ -86,8 +86,8 @@ services:
       - --raw=/data/raw
       - --api=http://api:8000
       - --bootstrap=redpanda:9092
-      - --from-day=110
-      - --to-day=110.25
+      - --from-day=140
+      - --to-day=140.25
       - --redis-url=redis://redis:6379/0
     depends_on:
       api:

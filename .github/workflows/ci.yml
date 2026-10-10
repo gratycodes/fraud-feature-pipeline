@@ -88,9 +88,11 @@ jobs:
           docker compose ps -a
           exit 1
       - name: Replay traffic through API + Kafka
-        run: docker compose run --rm replay
-      - name: Skew and drift report
-        run: docker compose run --rm monitor
+        run: docker compose run --rm --no-deps replay
+      - name: Skew and drift report (fail on skew)
+        run: >-
+          docker compose run --rm --no-deps monitor monitor --raw=/data/raw --offline=/data/offline
+          --model=/data/model --redis-url=redis://redis:6379/0 --fail-on-skew
       - name: Score one request
         run: |
           curl -sf 'localhost:8000/score?explain=true' -H 'content-type: application/json' -d '{
