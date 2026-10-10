@@ -1,0 +1,112 @@
+# Full stack: Redpanda (Kafka API) -> stream processor -> Redis <- FastAPI scorer.
+#
+#   docker compose up -d --build api processor   # build data + model, start the stack
+#   docker compose run --rm replay               # score 6h of traffic via the API, publish to Kafka
+#   docker compose run --rm monitor              # skew (feature log vs offline) + drift
+#   curl -s localhost:8000/model
+#   docker compose down -v
+
+x-app: &app
+  build: .
+  image: fraud-feature-pipeline:local
+  volumes:
+    - ffp-data:/data
+  environment:
+    REDIS_URL: redis://redis:6379/0
+
+services:
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=1G
+      - --overprovisioned
+      - --mode=dev-container
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      retries: 20
+
+  # One-shot batch job: synthetic data -> offline store -> model -> online store bootstrap.
+  bootstrap:
+    <<: *app
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        ffp build --workdir /data &&
+        ffp load-online --raw /data/raw --offline /data/offline --as-of-day 110
+        --redis-url redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  processor:
+    <<: *app
+    command:
+      - process
+      - --bootstrap=redpanda:9092
+      - --redis-url=redis://redis:6379/0
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+
+  api:
+    <<: *app
+    command: ["serve", "--host=0.0.0.0", "--port=8000", "--model=/data/model", "--redis-url=redis://redis:6379/0"]
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 3s
+      retries: 30
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+
+  replay:
+    <<: *app
+    profiles: ["demo"]
+    command:
+      - replay
+      - --raw=/data/raw
+      - --api=http://api:8000
+      - --bootstrap=redpanda:9092
+      - --from-day=110
+      - --to-day=110.25
+      - --redis-url=redis://redis:6379/0
+    depends_on:
+      api:
+        condition: service_healthy
+      processor:
+        condition: service_started
+
+  monitor:
+    <<: *app
+    profiles: ["demo"]
+    command:
+      - monitor
+      - --raw=/data/raw
+      - --offline=/data/offline
+      - --model=/data/model
+      - --redis-url=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  ffp-data:
