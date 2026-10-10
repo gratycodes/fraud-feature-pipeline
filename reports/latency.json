@@ -1,0 +1,31 @@
+{
+  "requests": 5000,
+  "machine": "x86_64, 8 vCPU, Python 3.12.15",
+  "server": "uvicorn, 1 worker; Redis on localhost",
+  "sequential": {
+    "client_ms": {
+      "p50": 1.653,
+      "p95": 2.335,
+      "p99": 2.749
+    },
+    "server_feature_fetch_ms": {
+      "p50": 0.204,
+      "p95": 0.431,
+      "p99": 0.608
+    },
+    "server_model_ms": {
+      "p50": 0.127,
+      "p95": 0.163,
+      "p99": 0.185
+    },
+    "rps": 583.0
+  },
+  "concurrent_8_threads": {
+    "client_ms": {
+      "p50": 8.778,
+      "p95": 12.852,
+      "p99": 16.516
+    },
+    "rps": 873.0
+  }
+}

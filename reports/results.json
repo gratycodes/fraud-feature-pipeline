@@ -1,0 +1,264 @@
+{
+  "generator": {
+    "seed": 7,
+    "n_cards": 3000,
+    "n_merchants": 500,
+    "days": 150,
+    "mean_txn_per_card_day": 1.3,
+    "card_testing_episodes": 165,
+    "ato_episodes": 200,
+    "ring_merchants": 4,
+    "ring_txns_per_merchant": 130,
+    "label_delay_median_days": 12.0,
+    "unreported_rate": 0.08,
+    "drift_start_day": 138,
+    "drift_amount_mult": 1.35
+  },
+  "model": {
+    "features": [
+      "card_txn_count_1m",
+      "card_txn_count_1h",
+      "card_txn_count_24h",
+      "card_small_txn_count_1h",
+      "card_amount_sum_1h",
+      "card_amount_sum_24h",
+      "card_distinct_merchants_1h",
+      "card_distinct_merchants_24h",
+      "card_distinct_countries_24h",
+      "merchant_txn_count_1h",
+      "merchant_txn_count_24h",
+      "merchant_small_txn_count_1h",
+      "merchant_distinct_cards_1h",
+      "card_seconds_since_last_txn",
+      "merchant_fraud_rate_30d",
+      "amount",
+      "is_foreign",
+      "is_online",
+      "hour_of_day",
+      "category_code",
+      "card_amount_ratio_24h"
+    ],
+    "best_iteration": 176,
+    "lgb_params": {
+      "objective": "binary",
+      "learning_rate": 0.02,
+      "num_leaves": 31,
+      "min_data_in_leaf": 50,
+      "feature_fraction": 0.9,
+      "bagging_fraction": 0.8,
+      "bagging_freq": 1,
+      "lambda_l2": 1.0,
+      "metric": "binary_logloss",
+      "verbose": -1,
+      "num_threads": 4
+    },
+    "train_config": {
+      "start_ts": 1767571200000,
+      "train_start_day": 30,
+      "train_end_day": 100,
+      "early_stop_end_day": 108,
+      "calib_end_day": 115,
+      "as_of_day": 130,
+      "test_end_day": 150,
+      "maturity_days": 15,
+      "seed": 7
+    },
+    "rows": {
+      "train": 299763,
+      "early_stop": 34326,
+      "calib": 30097,
+      "test": 85188
+    },
+    "positives": {
+      "train": 1225,
+      "early_stop": 167,
+      "calib": 171,
+      "test": 406
+    },
+    "gain_importance": {
+      "card_txn_count_1m": 1086.0749444961548,
+      "card_txn_count_1h": 508.4220480918884,
+      "card_txn_count_24h": 829.889018535614,
+      "card_small_txn_count_1h": 30055.53294277191,
+      "card_amount_sum_1h": 13512.054245233536,
+      "card_amount_sum_24h": 3783.8129844665527,
+      "card_distinct_merchants_1h": 71.23172044754028,
+      "card_distinct_merchants_24h": 353.5267918109894,
+      "card_distinct_countries_24h": 1070.490273475647,
+      "merchant_txn_count_1h": 836.2318322658539,
+      "merchant_txn_count_24h": 11794.673768520355,
+      "merchant_small_txn_count_1h": 126.40385007858276,
+      "merchant_distinct_cards_1h": 552.8286933898926,
+      "card_seconds_since_last_txn": 36972.561264276505,
+      "merchant_fraud_rate_30d": 82551.86868596077,
+      "amount": 47645.53526568413,
+      "is_foreign": 27337.892739534378,
+      "is_online": 3743.3768413066864,
+      "hour_of_day": 4696.225522994995,
+      "category_code": 15533.726434707642,
+      "card_amount_ratio_24h": 3385.5780613422394
+    },
+    "calibration": {
+      "chosen": "none",
+      "brier_on_later_window": {
+        "none": 0.0027716176703136267,
+        "platt": 0.0028709228727625143
+      }
+    }
+  },
+  "test_metrics": {
+    "test_rows": 85188,
+    "test_positives": 406,
+    "pr_auc": 0.5926704649378318,
+    "pr_auc_raw": 0.5926704649378318,
+    "pr_auc_ci95": [
+      0.5436168978204255,
+      0.6385191024203576
+    ],
+    "roc_auc": 0.9673374123352934,
+    "brier_raw": 0.0027640707289442786,
+    "brier_calibrated": 0.0027640707289442786,
+    "ece_raw": 0.0016078065400200237,
+    "ece_calibrated": 0.0016078065400200237,
+    "threshold": 0.006603386647854108,
+    "decisions": {
+      "approve_all": {
+        "blocked": 0,
+        "precision": NaN,
+        "recall": 0.0,
+        "fraud_usd_caught": 0.0,
+        "cost_usd": 140392.41
+      },
+      "rules_baseline": {
+        "blocked": 663,
+        "precision": 0.1568627450980392,
+        "recall": 0.2561576354679803,
+        "fraud_usd_caught": 30401.44,
+        "cost_usd": 111225.97
+      },
+      "model_fixed_threshold": {
+        "blocked": 3095,
+        "precision": 0.10242326332794831,
+        "recall": 0.7807881773399015,
+        "fraud_usd_caught": 113933.78,
+        "cost_usd": 35593.630000000005
+      },
+      "model_bayes_cost_rule": {
+        "blocked": 2005,
+        "precision": 0.15012468827930175,
+        "recall": 0.7413793103448276,
+        "fraud_usd_caught": 110995.44,
+        "cost_usd": 33401.97
+      }
+    },
+    "recall_by_pattern": {
+      "account_takeover": {
+        "events": 142,
+        "recall_bayes_rule": 0.9295774647887324,
+        "recall_rules_baseline": 0.14788732394366197
+      },
+      "card_testing": {
+        "events": 165,
+        "recall_bayes_rule": 0.9696969696969697,
+        "recall_rules_baseline": 0.5575757575757576
+      },
+      "merchant_ring": {
+        "events": 130,
+        "recall_bayes_rule": 0.2230769230769231,
+        "recall_rules_baseline": 0.0
+      }
+    }
+  },
+  "leakage_study": {
+    "correct": {
+      "pr_auc": 0.5926704649378318,
+      "pr_auc_ci95": [
+        0.5436168978204255,
+        0.6385191024203576
+      ],
+      "recall_by_pattern": {
+        "account_takeover": 0.9295774647887324,
+        "card_testing": 0.9696969696969697,
+        "merchant_ring": 0.2230769230769231
+      },
+      "cost_usd_bayes_rule": 33401.97
+    },
+    "leaky_offline_estimate": {
+      "pr_auc": 0.7701083579358965,
+      "pr_auc_ci95": [
+        0.7292163367762541,
+        0.804645402385953
+      ],
+      "recall_by_pattern": {
+        "account_takeover": 0.971830985915493,
+        "card_testing": 0.9515151515151515,
+        "merchant_ring": 0.8769230769230769
+      },
+      "cost_usd_bayes_rule": 10928.14
+    },
+    "leaky_model_as_served": {
+      "pr_auc": 0.6092111244814185,
+      "pr_auc_ci95": [
+        0.5545996096189065,
+        0.6585651607008269
+      ],
+      "recall_by_pattern": {
+        "account_takeover": 0.9647887323943662,
+        "card_testing": 0.9212121212121213,
+        "merchant_ring": 0.015384615384615385
+      },
+      "cost_usd_bayes_rule": 36667.509999999995
+    }
+  },
+  "replay": {
+    "start_day": 140,
+    "hours": 24,
+    "scored": 3958,
+    "warmup_events": 4691,
+    "seconds": 4.224776911003573,
+    "feature_ms_p50": 0.35871699947165325,
+    "feature_ms_p99": 2.5619673034816515,
+    "redis": "real"
+  },
+  "skew": {
+    "in_sync": {
+      "compared": 3958,
+      "ok": true,
+      "mismatches": {}
+    },
+    "no_last_seen_bootstrap": {
+      "compared": 3958,
+      "ok": false,
+      "mismatches": {
+        "card_seconds_since_last_txn": 493
+      }
+    },
+    "processor_lag_50": {
+      "compared": 3958,
+      "ok": false,
+      "mismatches": {
+        "card_txn_count_1m": 10,
+        "card_txn_count_1h": 140,
+        "card_txn_count_24h": 140,
+        "card_small_txn_count_1h": 55,
+        "card_amount_sum_1h": 140,
+        "card_amount_sum_24h": 140,
+        "card_distinct_merchants_1h": 117,
+        "card_distinct_merchants_24h": 98,
+        "card_distinct_countries_24h": 48,
+        "merchant_txn_count_1h": 1843,
+        "merchant_txn_count_24h": 1858,
+        "merchant_small_txn_count_1h": 381,
+        "merchant_distinct_cards_1h": 1804,
+        "card_seconds_since_last_txn": 140,
+        "card_amount_ratio_24h": 140
+      }
+    }
+  },
+  "timings_s": {
+    "generate": 2.232249644002877,
+    "backfill": 6.254752906002977,
+    "train_and_evaluate": 7.7114488080042065,
+    "leakage_study": 22.790935916003946
+  }
+}
