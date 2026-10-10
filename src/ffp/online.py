@@ -98,6 +98,18 @@ class OnlineStore:
         for chunk in _chunks(list(mapping.items()), 5_000):
             self.r.hset(f"{self.p}:card_profile", mapping=dict(chunk))
 
+    def load_card_last_seen(self, last_ts: pd.Series) -> None:
+        """Bootstrap "last seen" per card from history older than the event log.
+
+        Without this, a freshly started store reports NaN for
+        ``card_seconds_since_last_txn`` on every card whose previous transaction is
+        older than the replayed window, while the offline backfill has the value.
+        (The skew check caught exactly this on the first end-to-end run.)
+        """
+        items = [(str(k), int(v)) for k, v in last_ts.items()]
+        for chunk in _chunks(items, 5_000):
+            self.r.zadd(f"{self.p}:card_last", dict(chunk), gt=True)
+
     def load_merchant_rate_snapshots(self, snapshots: pd.DataFrame) -> int:
         """Materialise daily snapshots (what a nightly batch job would do)."""
         n = 0

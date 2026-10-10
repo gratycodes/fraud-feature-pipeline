@@ -11,8 +11,9 @@ checks each one:
 3. Training labels are what was known on the training date (``label_training_frame``),
    not the eventual ground truth.
 
-``leaky=True`` reproduces the usual mistake (a merchant fraud rate computed from all
-labels, including future ones) so its effect on the metrics can be measured.
+``leaky=True`` reproduces the usual mistake (the merchant fraud rate rolled up by
+event time, ignoring when each chargeback actually arrived) so its effect on the
+metrics can be measured.
 """
 
 from __future__ import annotations
@@ -126,12 +127,32 @@ def merchant_rate_snapshots(
 
 
 def leaky_merchant_rate(transactions: pd.DataFrame, labels: pd.DataFrame) -> pd.DataFrame:
-    """The classic mistake: one fraud rate per merchant from *all* labels, past and future."""
-    lab = labels[labels["is_fraud"] == 1][["txn_id"]].assign(fraud=1)
-    t = transactions[["txn_id", "merchant_id"]].merge(lab, on="txn_id", how="left").fillna(0)
-    g = t.groupby("merchant_id").agg(fraud=("fraud", "sum"), n=("fraud", "size")).reset_index()
-    g["value"] = [smoothed_rate(f, n) for f, n in zip(g["fraud"], g["n"], strict=True)]
-    return g[["merchant_id", "value"]]
+    """The classic mistake: join labels on txn_id and roll them up by *event* time.
+
+    It looks point-in-time correct (only events before ``t`` are counted), but it
+    uses chargebacks that had not arrived yet at ``t``. Offline that is a strong
+    signal for a compromised merchant; online the labels are 1-60 days away, so
+    the served value never matches.
+    """
+    fraud_ids = set(labels.loc[labels["is_fraud"] == 1, "txn_id"])
+    t = transactions[["txn_id", "ts", "merchant_id"]].copy()
+    t["fraud"] = t["txn_id"].isin(fraud_ids).astype(np.int64)
+    con = duckdb.connect()
+    try:
+        con.execute("SET enable_progress_bar = false")
+        con.register("t", t)
+        frame = (
+            f"PARTITION BY merchant_id ORDER BY ts RANGE BETWEEN {MERCHANT_RATE_WINDOW_MS} "
+            "PRECEDING AND CURRENT ROW EXCLUDE GROUP"
+        )
+        df = con.execute(
+            f"SELECT txn_id, coalesce(sum(fraud) OVER ({frame}), 0) AS f, "
+            f"count(*) OVER ({frame}) AS n FROM t"
+        ).df()
+    finally:
+        con.close()
+    df["value"] = [smoothed_rate(f, n) for f, n in zip(df["f"], df["n"], strict=True)]
+    return df[["txn_id", "value"]]
 
 
 def backfill(
@@ -152,8 +173,8 @@ def backfill(
             rate = leaky_merchant_rate(transactions, labels)
             con.register("rate", rate)
             mr = con.execute(
-                f"SELECT t.txn_id, coalesce(r.value, NULL) AS {MERCHANT_RATE_FEATURE} "
-                "FROM txns t LEFT JOIN rate r USING (merchant_id)"
+                f"SELECT t.txn_id, r.value AS {MERCHANT_RATE_FEATURE} "
+                "FROM txns t LEFT JOIN rate r USING (txn_id)"
             ).df()
         else:
             snaps = (

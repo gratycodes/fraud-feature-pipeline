@@ -147,8 +147,10 @@ def test_merchant_rate_only_uses_labels_known_at_snapshot_time() -> None:
     assert f.loc["before_label", MERCHANT_RATE_FEATURE] == pytest.approx(smoothed_rate(0, 1))
     assert f.loc["after_label", MERCHANT_RATE_FEATURE] == pytest.approx(smoothed_rate(1, 2))
 
+    # The leaky version counts the chargeback by event time, days before it arrived.
     leaky = backfill(t, CARDS, labels, leaky=True).set_index("txn_id")
-    assert leaky.loc["fraud", MERCHANT_RATE_FEATURE] == pytest.approx(smoothed_rate(1, 3))
+    assert leaky.loc["fraud", MERCHANT_RATE_FEATURE] == pytest.approx(smoothed_rate(0, 0))
+    assert leaky.loc["before_label", MERCHANT_RATE_FEATURE] == pytest.approx(smoothed_rate(1, 1))
 
 
 def test_snapshots_are_dense(small: Dataset, small_snapshots: pd.DataFrame) -> None:

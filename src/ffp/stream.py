@@ -19,7 +19,9 @@ from ffp.schema import Transaction
 
 
 class EventSource(Protocol):
-    def __iter__(self) -> Iterator[Transaction]: ...
+    """Yields events; may yield ``None`` as an idle tick so the processor can flush."""
+
+    def __iter__(self) -> Iterator[Transaction | None]: ...
 
     def commit(self) -> None: ...
 
@@ -32,7 +34,7 @@ class InProcessSource:
         self.committed = 0
         self._seen = 0
 
-    def __iter__(self) -> Iterator[Transaction]:
+    def __iter__(self) -> Iterator[Transaction | None]:
         for e in self._events:
             self._seen += 1
             yield e
@@ -116,6 +118,9 @@ class StreamProcessor:
         start = time.perf_counter()
         batch: list[Transaction] = []
         for e in source:
+            if e is None:
+                self._flush(batch, source, stats)
+                continue
             batch.append(e)
             if len(batch) >= self.batch_size:
                 self._flush(batch, source, stats)
@@ -134,29 +139,42 @@ class StreamProcessor:
         batch.clear()
 
 
-def publish(events: Iterable[Transaction], bootstrap: str, topic: str = "transactions") -> int:
-    """Produce events to Kafka keyed by card_id (per-card ordering within a partition)."""
-    from confluent_kafka import Producer
+class KafkaPublisher:
+    """Produces events keyed by card_id, so one card's events stay ordered in a partition."""
 
-    producer = Producer({"bootstrap.servers": bootstrap, "linger.ms": 20, "acks": "all"})
-    n = 0
-    errors: list[Any] = []
+    def __init__(self, bootstrap: str, topic: str = "transactions") -> None:
+        from confluent_kafka import Producer
 
-    def on_delivery(err: Any, _msg: Any) -> None:
+        self.topic = topic
+        self.producer = Producer({"bootstrap.servers": bootstrap, "linger.ms": 5, "acks": "all"})
+        self.errors: list[Any] = []
+        self.sent = 0
+
+    def _on_delivery(self, err: Any, _msg: Any) -> None:
         if err is not None:
-            errors.append(err)
+            self.errors.append(err)
 
-    for e in events:
-        producer.produce(
-            topic, key=e.card_id, value=json.dumps(e.to_dict()), on_delivery=on_delivery
+    def send(self, e: Transaction) -> None:
+        self.producer.produce(
+            self.topic, key=e.card_id, value=json.dumps(e.to_dict()), on_delivery=self._on_delivery
         )
-        n += 1
-        if n % 10_000 == 0:
-            producer.poll(0)
-    producer.flush(30)
-    if errors:
-        raise RuntimeError(f"{len(errors)} delivery errors, first: {errors[0]}")
-    return n
+        self.sent += 1
+        self.producer.poll(0)
+
+    def flush(self, timeout_s: float = 30) -> None:
+        remaining = self.producer.flush(timeout_s)
+        if remaining or self.errors:
+            raise RuntimeError(
+                f"{remaining} undelivered, {len(self.errors)} errors: {self.errors[:1]}"
+            )
+
+
+def publish(events: Iterable[Transaction], bootstrap: str, topic: str = "transactions") -> int:
+    pub = KafkaPublisher(bootstrap, topic)
+    for e in events:
+        pub.send(e)
+    pub.flush()
+    return pub.sent
 
 
 def transactions_from_frame(df: Any) -> Iterator[Transaction]:
