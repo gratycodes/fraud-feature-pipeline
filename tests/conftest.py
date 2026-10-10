@@ -70,3 +70,23 @@ def store(redis_client: redis.Redis) -> Iterator[OnlineStore]:
     s = OnlineStore(redis_client, prefix=f"test-{_RUN}-{uuid.uuid4().hex[:6]}")
     yield s
     s.flush()
+
+
+SMALL_TRAIN = dict(
+    train_end_day=10,
+    early_stop_end_day=13,
+    calib_end_day=16,
+    as_of_day=18,
+    test_end_day=21,
+    maturity_days=2,
+)
+
+
+@pytest.fixture(scope="session")
+def small_bundle(small: Dataset, small_features: pd.DataFrame):  # type: ignore[no-untyped-def]
+    from ffp.model import TrainConfig, fit, make_splits
+    from ffp.schema import EPOCH_START_MS
+
+    cfg = TrainConfig(start_ts=EPOCH_START_MS, **SMALL_TRAIN)  # type: ignore[arg-type]
+    splits = make_splits(small_features, small.labels, cfg)
+    return fit(splits, cfg, rounds=200), splits, cfg
