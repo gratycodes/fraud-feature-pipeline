@@ -47,6 +47,8 @@ _RUN = uuid.uuid4().hex[:8]
 def _real_redis() -> redis.Redis:
     url = os.environ.get("REDIS_URL")
     if not url:
+        if os.environ.get("FFP_REQUIRE_INTEGRATION"):
+            pytest.fail("FFP_REQUIRE_INTEGRATION is set but REDIS_URL is not")
         pytest.skip("REDIS_URL not set")
     client = redis.Redis.from_url(url)
     client.ping()

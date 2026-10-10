@@ -107,3 +107,25 @@ def _gen(n: int) -> Iterator[Transaction]:
 def test_processor_respects_max_events(store: OnlineStore) -> None:
     stats = StreamProcessor(store, batch_size=7).run(InProcessSource(_gen(100)), max_events=30)
     assert stats.events == 30
+
+
+class _TrickleSource:
+    """Yields a few events, then idle ticks (like a quiet Kafka topic), and records
+    what the store held at each tick."""
+
+    def __init__(self, store: OnlineStore, events: list[Transaction]) -> None:
+        self.store, self.events, self.seen_at_idle = store, events, -1
+
+    def __iter__(self) -> Iterator[Transaction | None]:
+        yield from self.events
+        yield None
+        self.seen_at_idle = int(self.store.r.zcard(self.store._card_key("c")))
+
+    def commit(self) -> None:
+        pass
+
+
+def test_partial_batch_is_flushed_when_the_source_goes_idle(store: OnlineStore) -> None:
+    src = _TrickleSource(store, list(_gen(7)))
+    StreamProcessor(store, batch_size=500, max_batch_delay_s=3600).run(src)
+    assert src.seen_at_idle == 7

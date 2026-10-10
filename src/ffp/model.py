@@ -132,6 +132,22 @@ class TrainConfig:
     def ts(self, day: int) -> int:
         return self.start_ts + day * DAY
 
+    @classmethod
+    def for_days(cls, start_ts: int, days: int) -> TrainConfig:
+        """The default 120-day timeline, scaled to a dataset of ``days`` days."""
+        if days == 120:
+            return cls(start_ts=start_ts)
+        f = days / 120
+        return cls(
+            start_ts=start_ts,
+            train_end_day=round(70 * f),
+            early_stop_end_day=round(78 * f),
+            calib_end_day=round(85 * f),
+            as_of_day=round(100 * f),
+            test_end_day=days,
+            maturity_days=max(1, round(15 * f)),
+        )
+
 
 LGB_PARAMS: dict[str, Any] = {
     "objective": "binary",

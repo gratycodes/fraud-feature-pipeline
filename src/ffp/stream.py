@@ -43,6 +43,37 @@ class InProcessSource:
         self.committed = self._seen
 
 
+def _transient_codes() -> set[int]:
+    try:
+        from confluent_kafka import KafkaError
+    except ImportError:  # pragma: no cover
+        return set()
+    return {KafkaError.UNKNOWN_TOPIC_OR_PART, KafkaError._PARTITION_EOF}
+
+
+_TRANSIENT = _transient_codes()
+
+
+def ensure_topic(bootstrap: str, topic: str, partitions: int = 3) -> None:
+    """Create the topic if it is missing.
+
+    A consumer subscribed to a topic that does not exist yet only notices it on the
+    next metadata refresh, which can be minutes; creating it up front avoids that.
+    """
+    from confluent_kafka import KafkaError, KafkaException
+    from confluent_kafka.admin import AdminClient, NewTopic
+
+    admin = AdminClient({"bootstrap.servers": bootstrap})
+    if topic in admin.list_topics(timeout=10).topics:
+        return
+    fut = admin.create_topics([NewTopic(topic, num_partitions=partitions, replication_factor=1)])
+    try:
+        fut[topic].result(timeout=15)
+    except KafkaException as exc:
+        if exc.args[0].code() != KafkaError.TOPIC_ALREADY_EXISTS:
+            raise
+
+
 class KafkaSource:
     """Kafka/Redpanda consumer yielding ``Transaction`` objects from JSON values.
 
@@ -59,6 +90,7 @@ class KafkaSource:
     ) -> None:
         from confluent_kafka import Consumer
 
+        ensure_topic(bootstrap, topic)
         self.consumer = Consumer(
             {
                 "bootstrap.servers": bootstrap,
@@ -70,19 +102,25 @@ class KafkaSource:
         self.consumer.subscribe([topic])
         self.idle_timeout_s = idle_timeout_s
 
-    def __iter__(self) -> Iterator[Transaction]:
+    def __iter__(self) -> Iterator[Transaction | None]:
         last = time.monotonic()
         while True:
-            msg = self.consumer.poll(0.5)
+            msg = self.consumer.poll(0.1)
             if msg is None:
                 if (
                     self.idle_timeout_s is not None
                     and time.monotonic() - last > self.idle_timeout_s
                 ):
                     return
+                yield None  # idle tick: lets the processor flush a partial batch
                 continue
-            if msg.error():
-                raise RuntimeError(str(msg.error()))
+            err = msg.error()
+            if err is not None:
+                # The topic may not exist until the first producer writes to it.
+                if err.code() in _TRANSIENT:
+                    yield None
+                    continue
+                raise RuntimeError(str(err))
             last = time.monotonic()
             yield Transaction.from_dict(json.loads(msg.value() or b"{}"))
 
@@ -109,20 +147,27 @@ class ProcessorStats:
 
 
 class StreamProcessor:
-    def __init__(self, store: OnlineStore, batch_size: int = 500) -> None:
+    def __init__(
+        self, store: OnlineStore, batch_size: int = 500, max_batch_delay_s: float = 0.05
+    ) -> None:
         self.store = store
         self.batch_size = batch_size
+        # Bounds how stale the online store can be under a steady trickle of events.
+        self.max_batch_delay_s = max_batch_delay_s
 
     def run(self, source: EventSource, max_events: int | None = None) -> ProcessorStats:
         stats = ProcessorStats()
         start = time.perf_counter()
         batch: list[Transaction] = []
+        opened = 0.0
         for e in source:
-            if e is None:
-                self._flush(batch, source, stats)
-                continue
-            batch.append(e)
-            if len(batch) >= self.batch_size:
+            if e is not None:
+                if not batch:
+                    opened = time.perf_counter()
+                batch.append(e)
+            full = len(batch) >= self.batch_size
+            late = bool(batch) and time.perf_counter() - opened >= self.max_batch_delay_s
+            if e is None or full or late:
                 self._flush(batch, source, stats)
             if max_events is not None and stats.events + len(batch) >= max_events:
                 break
@@ -145,6 +190,7 @@ class KafkaPublisher:
     def __init__(self, bootstrap: str, topic: str = "transactions") -> None:
         from confluent_kafka import Producer
 
+        ensure_topic(bootstrap, topic)
         self.topic = topic
         self.producer = Producer({"bootstrap.servers": bootstrap, "linger.ms": 5, "acks": "all"})
         self.errors: list[Any] = []

@@ -94,8 +94,9 @@ def cmd_demo(a: argparse.Namespace) -> None:
         }
         skew_md += [f"## {title}", "", skew.to_markdown(), ""]
         if key == "in_sync":
+            test_from = start_ts + int(res.bundle.metadata["train_config"]["as_of_day"]) * DAY
             _, drift_md = monitoring_reports(
-                res.bundle, res.features, rep.served, current_start_ts=r_start
+                res.bundle, res.features, rep.served, current_start_ts=test_from
             )
             replay_json = {
                 "start_day": a.replay_day,
@@ -124,10 +125,30 @@ def cmd_demo(a: argparse.Namespace) -> None:
     (reports / "skew.md").write_text("\n".join(skew_md))
     (reports / "drift.md").write_text("# Feature drift (PSI)\n\n" + drift_md + "\n")
     print(f"[reports] {reports}/results.json, skew.md, drift.md")
+    if a.fail_on_skew and not skew_json["in_sync"]["ok"]:  # type: ignore[index]
+        sys.exit("in-sync replay shows train/serve skew")
+
+
+def cmd_build(a: argparse.Namespace) -> None:
+    """generate -> backfill -> train, without the online replay (used by docker compose)."""
+    from ffp.pipeline import run_offline
+
+    work = Path(a.workdir)
+    res = run_offline(
+        _gen_cfg(a), work / "raw", work / "offline", work / "model", with_leakage_study=False
+    )
+    print(
+        f"built {work}: {len(res.features):,} feature rows, test PR-AUC {res.metrics['pr_auc_raw']:.3f}"
+    )
 
 
 def cmd_load_online(a: argparse.Namespace) -> None:
-    """Load card profiles + merchant-rate snapshots into Redis (the nightly batch job)."""
+    """Load card profiles, merchant-rate snapshots and last-seen times into Redis.
+
+    This is the batch side of the online store. ``--as-of-day`` is where the stream
+    will start; last-seen is bootstrapped from events older than its 25h warm-up.
+    """
+    from ffp.features import MAX_WINDOW_MS
     from ffp.pipeline import online_store_from_url
 
     store = online_store_from_url(a.redis_url, prefix=a.prefix)
@@ -136,7 +157,11 @@ def cmd_load_online(a: argparse.Namespace) -> None:
     n = store.load_merchant_rate_snapshots(
         pd.read_parquet(Path(a.offline) / "merchant_rate_snapshots.parquet")
     )
-    print(f"loaded {len(ds.cards):,} card profiles and {n} daily merchant-rate snapshots")
+    tx = ds.transactions
+    start = int(tx["ts"].min()) // DAY * DAY
+    cutoff = start + int(a.as_of_day * DAY) - MAX_WINDOW_MS - 3600_000
+    store.load_card_last_seen(tx[tx["ts"] < cutoff].groupby("card_id")["ts"].max())
+    print(f"loaded {len(ds.cards):,} card profiles, {n} merchant-rate snapshots, last-seen times")
 
 
 def cmd_produce(a: argparse.Namespace) -> None:
@@ -179,7 +204,10 @@ def cmd_replay(a: argparse.Namespace) -> None:
     lo = start + int(a.from_day * DAY)
     warm = tx[(tx["ts"] >= lo - DAY - 3600_000) & (tx["ts"] < lo)]
     publish(transactions_from_frame(warm), a.bootstrap, a.topic)
-    time.sleep(a.warmup_wait)
+    if a.redis_url and len(warm):
+        _wait_for_processor(a.redis_url, a.prefix, warm.tail(100), timeout_s=a.warmup_wait)
+    else:
+        time.sleep(a.warmup_wait)
     sel = tx[(tx["ts"] >= lo) & (tx["ts"] < start + int(a.to_day * DAY))]
     pub = KafkaPublisher(a.bootstrap, a.topic)
     blocked = 0
@@ -193,6 +221,33 @@ def cmd_replay(a: argparse.Namespace) -> None:
                 time.sleep(a.pace_ms / 1000)
     pub.flush()
     print(f"warm-up {len(warm):,} events; scored {len(sel):,}; blocked {blocked:,}")
+
+
+def _wait_for_processor(redis_url: str, prefix: str, tail: pd.DataFrame, timeout_s: float) -> None:
+    """Block until the stream processor has applied the given (last) warm-up events.
+
+    Partitions are consumed independently, so one event landing proves nothing about
+    the others; the tail of the warm-up spans every partition.
+    """
+    from ffp.pipeline import online_store_from_url
+
+    store = online_store_from_url(redis_url, prefix=prefix)
+    t0 = time.monotonic()
+    pending = list(tail[["txn_id", "card_id", "ts"]].itertuples(index=False, name=None))
+    while time.monotonic() - t0 < timeout_s:
+        pending = [
+            (txn_id, card_id, ts)
+            for txn_id, card_id, ts in pending
+            if not any(
+                str(m.decode() if isinstance(m, bytes) else m).startswith(f"{txn_id}|")
+                for m in store.r.zrangebyscore(store._card_key(str(card_id)), int(ts), int(ts))
+            )
+        ]
+        if not pending:
+            print(f"processor caught up with warm-up after {time.monotonic() - t0:.1f}s")
+            return
+        time.sleep(0.2)
+    sys.exit("timed out waiting for the stream processor to apply the warm-up events")
 
 
 def cmd_monitor(a: argparse.Namespace) -> None:
@@ -237,7 +292,7 @@ def cmd_train(a: argparse.Namespace) -> None:
     feats = pd.read_parquet(Path(a.offline) / "features.parquet")
     start = int(ds.transactions["ts"].min()) // DAY * DAY
     days = int((int(ds.transactions["ts"].max()) - start) // DAY) + 1
-    cfg = TrainConfig(start_ts=start, test_end_day=days)
+    cfg = TrainConfig.for_days(start, days)
     splits = make_splits(feats, ds.labels, cfg)
     bundle = fit(splits, cfg)
     bundle.save(a.model)
@@ -273,7 +328,7 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("train", help="train + evaluate the model")
     p.add_argument("--raw", default="data/raw")
     p.add_argument("--offline", default="data/offline")
-    p.add_argument("--model", default="artifacts/model")
+    p.add_argument("--model", default="data/model")
     p.set_defaults(fn=cmd_train)
 
     p = sub.add_parser("demo", help="full pipeline without Docker (fakeredis unless --redis-url)")
@@ -285,20 +340,29 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--replay-day", type=int, default=110)
     p.add_argument("--replay-hours", type=float, default=24)
     p.add_argument("--lag-events", type=int, default=50)
+    p.add_argument(
+        "--fail-on-skew", action="store_true", help="exit 1 if the in-sync replay shows skew"
+    )
     p.set_defaults(fn=cmd_demo)
 
+    p = sub.add_parser("build", help="generate + backfill + train (no replay)")
+    _add_gen_args(p)
+    p.add_argument("--workdir", default="data")
+    p.set_defaults(fn=cmd_build)
+
     for name, fn, help_ in [
-        ("load-online", cmd_load_online, "load profiles + merchant snapshots into Redis"),
+        ("load-online", cmd_load_online, "load profiles, merchant snapshots, last-seen into Redis"),
         ("monitor", cmd_monitor, "skew + drift report from the live feature log"),
     ]:
         p = sub.add_parser(name, help=help_)
         p.add_argument("--raw", default="data/raw")
         p.add_argument("--offline", default="data/offline")
-        p.add_argument("--model", default="artifacts/model")
+        p.add_argument("--model", default="data/model")
         p.add_argument("--redis-url", default="redis://localhost:6379/0")
         p.add_argument("--prefix", default="ffp")
         p.add_argument("--sample", type=int, default=5000)
         p.add_argument("--fail-on-skew", action="store_true")
+        p.add_argument("--as-of-day", type=float, default=110)
         p.set_defaults(fn=fn)
 
     p = sub.add_parser("produce", help="publish transactions to Kafka")
@@ -327,12 +391,19 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--topic", default="transactions")
     p.add_argument("--from-day", type=float, default=110)
     p.add_argument("--to-day", type=float, default=110.25)
-    p.add_argument("--pace-ms", type=float, default=0, help="sleep between events")
-    p.add_argument("--warmup-wait", type=float, default=5, help="seconds to let warm-up land")
+    p.add_argument(
+        "--pace-ms",
+        type=float,
+        default=150,
+        help="sleep between events; lower it to watch processor lag show up as skew",
+    )
+    p.add_argument("--warmup-wait", type=float, default=60, help="max seconds for warm-up to land")
+    p.add_argument("--redis-url", default=None, help="wait on Redis until warm-up is applied")
+    p.add_argument("--prefix", default="ffp")
     p.set_defaults(fn=cmd_replay)
 
     p = sub.add_parser("serve", help="run the FastAPI scoring service")
-    p.add_argument("--model", default="artifacts/model")
+    p.add_argument("--model", default="data/model")
     p.add_argument("--redis-url", default="redis://localhost:6379/0")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)

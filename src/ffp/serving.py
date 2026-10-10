@@ -163,5 +163,5 @@ def app_from_env() -> FastAPI:
     store = OnlineStore(
         redis.Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
     )
-    model = ModelBundle.load(os.environ.get("FFP_MODEL_DIR", "artifacts/model"))
+    model = ModelBundle.load(os.environ.get("FFP_MODEL_DIR", "data/model"))
     return create_app(ScoringService(store, model))

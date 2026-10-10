@@ -57,7 +57,7 @@ def run_offline(
     timings["backfill"] = time.perf_counter() - t
 
     start_ts = int(ds.transactions["ts"].min()) // DAY * DAY
-    cfg = train_cfg or TrainConfig(start_ts=start_ts, test_end_day=gen_cfg.days)
+    cfg = train_cfg or TrainConfig.for_days(start_ts, gen_cfg.days)
     t = time.perf_counter()
     splits = make_splits(feats, ds.labels, cfg)
     bundle = fit(splits, cfg)
