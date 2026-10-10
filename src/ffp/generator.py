@@ -241,9 +241,7 @@ def generate(cfg: GeneratorConfig | None = None) -> Dataset:
                 online_idx = np.flatnonzero(m_online & (m_cat != "transit"))
                 op = m_pop[online_idx] / m_pop[online_idx].sum()
                 m[move] = rng.choice(online_idx, size=int(move.sum()), p=op)
-                amount[move] = (
-                    _amounts(rng, m_cat[m[move]], scale) * cfg.drift_amount_mult
-                )
+                amount[move] = _amounts(rng, m_cat[m[move]], scale) * cfg.drift_amount_mult
         # Legit look-alike of card testing: transit taps come in small bursts.
         transit = np.flatnonzero(m_cat[m] == "transit")
         extra = transit[rng.random(len(transit)) < 0.4]
